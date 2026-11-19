@@ -1,0 +1,42 @@
+# /etc/systemd/system/audiostream.service
+# Starts AudioStream at boot, before anyone logs in.
+# deploy/install.sh fills in USER and the paths for you, or you can edit them by hand.
+
+[Unit]
+Description=AudioStream - music & audiobook streaming server
+Wants=network-online.target
+After=network-online.target
+# If your library is on a network share or a separate drive, uncomment and
+# put its mount point here so the service waits for it:
+#RequiresMountsFor=/mnt/media
+
+[Service]
+Type=simple
+# Run as your normal account so it can read your music folders
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__APPDIR__
+
+# Optional settings (password, roots, port) live in /etc/audiostream.env
+EnvironmentFile=-/etc/audiostream.env
+ExecStart=/usr/bin/python3 __APPDIR__/server.py \
+    --port ${AUDIOSTREAM_PORT} \
+    --data ${AUDIOSTREAM_DATA} \
+    $AUDIOSTREAM_ROOTS
+
+Environment=AUDIOSTREAM_PORT=8000
+Environment=AUDIOSTREAM_DATA=__APPDIR__/progress.json
+Environment=PYTHONUNBUFFERED=1
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the files are read-only to the service; only progress.json can be written
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__APPDIR__
+
+[Install]
+WantedBy=multi-user.target
