@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14161b">
+<title>AudioStream</title>
+<style>
+  :root {
+    --bg: #14161b; --panel: #1d2027; --panel2: #262a33; --text: #e8e9ec;
+    --muted: #8b90a0; --accent: #f0a040; --accent2: #ffbf6b; --ok: #6cc28a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg);
+    padding: 12px 16px 8px; border-bottom: 1px solid var(--panel2); }
+  header h1 { margin: 0 0 8px; font-size: 18px; letter-spacing: .5px; }
+  header h1 span { color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  select, button { font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid #333846; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .crumbs { font-size: 13px; color: var(--muted); overflow-x: auto; white-space: nowrap; }
+  .crumbs a { color: var(--accent2); text-decoration: none; cursor: pointer; }
+  main { padding: 12px 16px 220px; max-width: 900px; margin: 0 auto; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted);
+    margin: 18px 0 8px; }
+  .list { display: flex; flex-direction: column; gap: 4px; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    background: var(--panel); border-radius: 10px; cursor: pointer; position: relative;
+    overflow: hidden; }
+  .item:hover { background: var(--panel2); }
+  .item.playing { outline: 1px solid var(--accent); }
+  .item .icon { width: 22px; text-align: center; flex-shrink: 0; }
+  .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+  .item .meta.done { color: var(--ok); }
+  .item .bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .resume-btn { background: var(--accent); color: #1a1a1a; border: none; font-weight: 600; }
+  .empty { color: var(--muted); padding: 10px 2px; }
+
+  /* Player */
+  #player { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: #101217ee; backdrop-filter: blur(8px); border-top: 1px solid var(--panel2);
+    padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); }
+  #player .inner { max-width: 900px; margin: 0 auto; }
+  #np-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #np-folder { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seek { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 12px;
+    color: var(--muted); font-variant-numeric: tabular-nums; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .controls { display: flex; justify-content: center; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .controls button { min-width: 52px; padding: 8px 6px; border-radius: 10px; }
+  .controls .play { min-width: 64px; font-size: 20px; background: var(--accent); color: #1a1a1a; border: none; }
+  .controls .skip { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .extras { display: flex; justify-content: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+  .extras select, .extras button { padding: 4px 8px; font-size: 13px; }
+  .hint { text-align: center; font-size: 11px; color: var(--muted); margin-top: 6px; }
+  @media (max-width: 520px) { .hint { display: none; } .controls button { min-width: 46px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Audio<span>Stream</span></h1>
+  <div class="row">
+    <select id="rootSel" title="Library root"></select>
+    <button id="upBtn" title="Up one folder">⬆ Up</button>
+    <button id="homeBtn" title="Recently played">🕘 Recent</button>
+  </div>
+  <div class="crumbs" id="crumbs" style="margin-top:8px"></div>
+</header>
+
+<main id="main"></main>
+
+<div id="player">
+  <div class="inner">
+    <div id="np-title">Nothing playing</div>
+    <div id="np-folder">Pick a file to start</div>
+    <div class="seek">
+      <span id="cur">0:00</span>
+      <input type="range" id="seekBar" min="0" max="1000" value="0" step="1">
+      <span id="dur">0:00</span>
+    </div>
+    <div class="controls">
+      <button id="prevBtn" title="Previous track">⏮</button>
+      <button class="skip" data-skip="-30" title="Back 30s">↺30</button>
+      <button class="skip" data-skip="-20" title="Back 20s">↺20</button>
+      <button class="play" id="playBtn" title="Play/Pause">▶</button>
+      <button class="skip" data-skip="20" title="Forward 20s">20↻</button>
+      <button class="skip" data-skip="30" title="Forward 30s">30↻</button>
+      <button id="nextBtn" title="Next track">⏭</button>
+    </div>
+    <div class="extras">
+      <label>Speed
+        <select id="speedSel">
+          <option>0.75</option><option selected>1</option><option>1.1</option><option>1.25</option>
+          <option>1.5</option><option>1.75</option><option>2</option>
+        </select>
+      </label>
+      <label>Sleep
+        <select id="sleepSel">
+          <option value="0">Off</option><option value="15">15 min</option>
+          <option value="30">30 min</option><option value="45">45 min</option>
+          <option value="60">60 min</option><option value="-1">End of track</option>
+        </select>
+      </label>
+      <button id="restartBtn" title="Restart this track from 0:00">⟲ Restart</button>
+    </div>
+    <div class="hint">Keys: Space play/pause · ←/→ 20s · Shift+←/→ 30s · N/P next/prev track</div>
+  </div>
+</div>
+
+<audio id="audio" preload="metadata"></audio>
+
+<script>
+const $ = s => document.querySelector(s);
+const audio = $('#audio');
+const LS = {
+  get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+let roots = [];
+let currentDir = null;      // listing currently shown
+let queue = [];             // files in folder of current track
+let current = null;         // {path, name, folder}
+let pendingSeek = null;
+let lastSaved = 0;
+let sleepTimer = null, sleepAtEnd = false;
+let seeking = false;
+
+const api = async (url, opts) => {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+};
+const enc = encodeURIComponent;
+const fmt = s => {
+  if (!isFinite(s) || s < 0) s = 0;
+  s = Math.floor(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
+};
+const basename = p => p.split(/[\\/]/).pop();
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---------- Browsing ----------
+async function init() {
+  roots = (await api('/api/roots')).roots;
+  const sel = $('#rootSel');
+  sel.innerHTML = roots.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+  sel.onchange = () => openDir(sel.value);
+  $('#upBtn').onclick = () => currentDir?.parent && openDir(currentDir.parent);
+  $('#homeBtn').onclick = showRecent;
+
+  // Restore the last-played track into the player (paused, at saved position)
+  const recent = await api('/api/recent');
+  if (recent.last) {
+    const item = recent.items.find(i => i.path === recent.last);
+    if (item) await loadTrack(item.path, { autoplay: false });
+  }
+  const lastDir = LS.get('lastDir', null);
+  if (lastDir) openDir(lastDir).catch(() => showRecent());
+  else showRecent();
+}
+
+async function openDir(path) {
+  const d = await api('/api/list?path=' + enc(path));
+  currentDir = d;
+  LS.set('lastDir', d.path);
+  if (d.root) $('#rootSel').value = d.root;
+  renderCrumbs(d);
+  renderDir(d);
+  window.scrollTo(0, 0);
+}
+
+function renderCrumbs(d) {
+  const root = d.root || '';
+  const rel = d.path.slice(root.length).split(/[\\/]/).filter(Boolean);
+  let acc = root;
+  const parts = [`<a data-p="${esc(root)}">${esc(root)}</a>`];
+  for (const seg of rel) {
+    acc = acc.replace(/[\\/]$/, '') + '/' + seg;
+    parts.push(`<a data-p="${esc(acc)}">${esc(seg)}</a>`);
+  }
+  $('#crumbs').innerHTML = parts.join(' / ');
+  $('#crumbs').querySelectorAll('a').forEach(a => a.onclick = () => openDir(a.dataset.p));
+}
+
+function progressMeta(p) {
+  if (!p) return '';
+  if (p.finished) return `<span class="meta done">✓ done</span>`;
+  return `<span class="meta">${fmt(p.position)}${p.duration ? ' / ' + fmt(p.duration) : ''}</span>`;
+}
+function progressBar(p) {
+  if (!p || !p.duration || p.finished) return '';
+  return `<div class="bar" style="width:${Math.min(100, p.position / p.duration * 100)}%"></div>`;
+}
+
+function renderDir(d) {
+  let html = '';
+  if (d.resume) {
+    const f = d.files.find(x => x.path === d.resume);
+    html += `<div class="row" style="margin:6px 0 4px">
+      <button class="resume-btn" id="resumeBtn">▶ Resume: ${esc(f.name)} @ ${fmt(f.progress.position)}</button></div>`;
+  }
+  if (d.dirs.length) {
+    html += `<h2>Folders</h2><div class="list">` + d.dirs.map(x => `
+      <div class="item" data-dir="${esc(x.path)}">
+        <span class="icon">📁</span><span class="name">${esc(x.name)}</span>
+        ${x.has_progress ? '<span class="dot" title="You have listened in here"></span>' : ''}
+      </div>`).join('') + `</div>`;
+  }
+  if (d.files.length) {
+    html += `<h2>Audio files (${d.files.length})</h2><div class="list">` + d.files.map(f => `
+      <div class="item ${current?.path === f.path ? 'playing' : ''}" data-file="${esc(f.path)}">
+        <span class="icon">${current?.path === f.path ? '🔊' : '🎵'}</span>
+        <span class="name">${esc(f.name)}</span>${progressMeta(f.progress)}${progressBar(f.progress)}
+      </div>`).join('') + `</div>`;
+  }
+  if (!d.dirs.length && !d.files.length) html += `<div class="empty">No folders or audio files here.</div>`;
+  $('#main').innerHTML = html;
+
+  $('#main').querySelectorAll('[data-dir]').forEach(el => el.onclick = () => openDir(el.dataset.dir));
+  $('#main').querySelectorAll('[data-file]').forEach(el => el.onclick = () => {
+    queue = d.files;
+    loadTrack(el.dataset.file, { autoplay: true });
+  });
+  const rb = $('#resumeBtn');
+  if (rb) rb.onclick = () => { queue = d.files; loadTrack(d.resume, { autoplay: true }); };
+}
+
+async function showRecent() {
+  const r = await api('/api/recent');
+  currentDir = null;
+  $('#crumbs').textContent = 'Recently played';
+  let html = `<h2>Recently played</h2>`;
+  if (!r.items.length) {
+    html += `<div class="empty">Nothing yet. Pick a folder from the dropdown above and start listening.</div>
+      <div class="row"><button id="browseBtn">📁 Browse ${esc(roots[0])}</button></div>`;
+  } else {
+    html += `<div class="list">` + r.items.map(i => `
+      <div class="item" data-file="${esc(i.path)}" data-folder="${esc(i.folder)}">
+        <span class="icon">${i.progress.finished ? '✓' : '▶'}</span>
+        <span class="name">${esc(i.name)}<br><small style="color:var(--muted)">${esc(i.folder)}</small></span>
+        ${progressMeta(i.progress)}${progressBar(i.progress)}
+      </div>`).join('') + `</div>
+      <div class="row" style="margin-top:12px"><button id="browseBtn">📁 Browse library</button></div>`;
+  }
+  $('#main').innerHTML = html;
+  $('#browseBtn').onclick = () => openDir(LS.get('lastDir', roots[0]) || roots[0]);
+  $('#main').querySelectorAll('[data-file]').forEach(el => el.onclick = async () => {
+    await openDir(el.dataset.folder);          // load folder so next/prev work
+    loadTrack(el.dataset.file, { autoplay: true });
+  });
+}
+
+// ---------- Playback ----------
+async function ensureQueueFor(path) {
+  const folder = path.replace(/[\\/][^\\/]*$/, '');
+  if (queue.some(f => f.path === path)) return;
+  try { queue = (await api('/api/list?path=' + enc(folder))).files; } catch { queue = []; }
+}
+
+async function loadTrack(path, { autoplay = true, fromStart = false } = {}) {
+  if (current && current.path !== path) saveProgress(true);
+  await ensureQueueFor(path);
+  const folder = path.replace(/[\\/][^\\/]*$/, '');
+  current = { path, name: basename(path), folder };
+
+  let start = 0;
+  if (!fromStart) {
+    try {
+      const { progress } = await api('/api/progress?path=' + enc(path));
+      if (progress && !progress.finished) start = Math.max(0, progress.position - 2); // back up 2s for context
+    } catch {}
+  }
+  pendingSeek = start;
+  audio.src = '/stream?path=' + enc(path);
+  audio.playbackRate = parseFloat($('#speedSel').value);
+  $('#np-title').textContent = current.name;
+  $('#np-folder').textContent = folder;
+  document.title = current.name + ' · AudioStream';
+  setMediaSession();
+  if (autoplay) audio.play().catch(() => {});
+  markPlayingInList();
+}
+
+function markPlayingInList() {
+  document.querySelectorAll('.item[data-file]').forEach(el => {
+    const on = current && el.dataset.file === current.path;
+    el.classList.toggle('playing', on);
+  });
+}
+
+audio.addEventListener('loadedmetadata', () => {
+  if (pendingSeek != null) {
+    if (pendingSeek < audio.duration - 1) audio.currentTime = pendingSeek;
+    pendingSeek = null;
+  }
+  $('#dur').textContent = fmt(audio.duration);
+});
+audio.addEventListener('timeupdate', () => {
+  if (!seeking && audio.duration) $('#seekBar').value = Math.round(audio.currentTime / audio.duration * 1000);
+  $('#cur').textContent = fmt(audio.currentTime);
+  if (Date.now() - lastSaved > 5000 && !audio.paused) saveProgress();
+  if ('mediaSession' in navigator && audio.duration && navigator.mediaSession.setPositionState) {
+    try { navigator.mediaSession.setPositionState({ duration: audio.duration, position: audio.currentTime, playbackRate: audio.playbackRate }); } catch {}
+  }
+});
+audio.addEventListener('play', () => { $('#playBtn').textContent = '⏸'; });
+audio.addEventListener('pause', () => { $('#playBtn').textContent = '▶'; saveProgress(true); });
+audio.addEventListener('ended', () => {
+  saveProgress(true);
+  if (sleepAtEnd) { sleepAtEnd = false; $('#sleepSel').value = '0'; return; }
+  nextTrack();
+});
+audio.addEventListener('error', () => {
+  if (audio.src) $('#np-folder').textContent = '⚠ This browser cannot play this file format.';
+});
+
+function saveProgress(force = false) {
+  if (!current || !audio.duration) return;
+  lastSaved = Date.now();
+  const body = JSON.stringify({ path: current.path, position: audio.currentTime, duration: audio.duration });
+  if (force && navigator.sendBeacon) {
+    navigator.sendBeacon('/api/progress', new Blob([body], { type: 'application/json' }));
+  } else {
+    fetch('/api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+  }
+}
+window.addEventListener('pagehide', () => saveProgress(true));
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveProgress(true); });
+
+function skip(sec) {
+  if (!audio.duration) return;
+  audio.currentTime = Math.min(Math.max(0, audio.currentTime + sec), audio.duration - 0.5);
+  saveProgress();
+}
+function togglePlay() {
+  if (!current) return;
+  audio.paused ? audio.play() : audio.pause();
+}
+function trackIndex() { return queue.findIndex(f => f.path === current?.path); }
+function nextTrack() {
+  const i = trackIndex();
+  if (i >= 0 && i < queue.length - 1) loadTrack(queue[i + 1].path, { autoplay: true, fromStart: false });
+}
+function prevTrack() {
+  if (audio.currentTime > 5) { audio.currentTime = 0; return; }
+  const i = trackIndex();
+  if (i > 0) loadTrack(queue[i - 1].path, { autoplay: true });
+}
+
+// Controls
+document.querySelectorAll('[data-skip]').forEach(b => b.onclick = () => skip(parseInt(b.dataset.skip)));
+$('#playBtn').onclick = togglePlay;
+$('#nextBtn').onclick = nextTrack;
+$('#prevBtn').onclick = prevTrack;
+$('#restartBtn').onclick = () => { audio.currentTime = 0; saveProgress(); };
+
+const seekBar = $('#seekBar');
+seekBar.addEventListener('input', () => { seeking = true; $('#cur').textContent = fmt(seekBar.value / 1000 * (audio.duration || 0)); });
+seekBar.addEventListener('change', () => {
+  if (audio.duration) audio.currentTime = seekBar.value / 1000 * audio.duration;
+  seeking = false; saveProgress();
+});
+
+const speedSel = $('#speedSel');
+speedSel.value = String(LS.get('speed', '1'));
+speedSel.onchange = () => { audio.playbackRate = parseFloat(speedSel.value); LS.set('speed', speedSel.value); };
+
+$('#sleepSel').onchange = e => {
+  clearTimeout(sleepTimer); sleepAtEnd = false;
+  const v = parseInt(e.target.value);
+  if (v === -1) sleepAtEnd = true;
+  else if (v > 0) sleepTimer = setTimeout(() => { audio.pause(); e.target.value = '0'; }, v * 60000);
+};
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); skip(e.shiftKey ? 30 : 20); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); skip(e.shiftKey ? -30 : -20); }
+  else if (e.key === 'n' || e.key === 'N') nextTrack();
+  else if (e.key === 'p' || e.key === 'P') prevTrack();
+});
+
+// Lock-screen / headphone / car controls
+function setMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: current.name.replace(/\.[^.]+$/, ''),
+    artist: basename(current.folder),
+    album: current.folder,
+  });
+  const ms = navigator.mediaSession;
+  const h = (a, fn) => { try { ms.setActionHandler(a, fn); } catch {} };
+  h('play', () => audio.play());
+  h('pause', () => audio.pause());
+  h('seekbackward', d => skip(-(d.seekOffset || 30)));
+  h('seekforward', d => skip(d.seekOffset || 30));
+  h('previoustrack', prevTrack);
+  h('nexttrack', nextTrack);
+  h('seekto', d => { audio.currentTime = d.seekTime; });
+}
+
+init().catch(err => { $('#main').innerHTML = `<div class="empty">Error: ${esc(err.message)}</div>`; });
+</script>
+</body>
+</html>

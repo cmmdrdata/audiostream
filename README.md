@@ -1,0 +1,60 @@
+# AudioStream
+
+Stream your music and audiobooks from your computer to any browser (desktop or phone).
+It remembers where you stopped in every file.
+
+**Needs:** Python 3.8+, and nothing else to install.
+
+## Run it
+
+```bash
+python3 server.py --root ~/Music --root ~/Audiobooks
+```
+
+Open `http://<computer-ip>:8000` in a browser on any device on your network.
+
+| Option | What it does |
+|---|---|
+| `--root PATH` | A folder you can browse (repeat it for more). Default: your home folder. Use `--root /` to browse everything. |
+| `--port 8000` | Which port to listen on |
+| `--host 0.0.0.0` | Bind address. Use `127.0.0.1` for this machine only. |
+| `--password X` | Turns on a browser login (any username, this password). You can set `AUDIOSTREAM_PASSWORD` instead. |
+| `--data FILE` | Where positions are saved (default `progress.json` next to `server.py`) |
+| `--show-hidden` | Shows dot-folders |
+
+## Features
+
+- Browse folders inside your roots, with breadcrumbs. Files sort naturally, so Chapter 2 comes before Chapter 10.
+- **Resume:** the position is saved every 5 seconds, on pause and when you close the tab. Reopening a file starts 2 seconds before where you stopped.
+  - Each folder has a **▶ Resume** button for the last file you played in it.
+  - Folders you've listened in show an orange dot.
+  - The **Recent** view lists your last 20 files with progress bars.
+  - When you open the page, the last file you played is loaded and ready.
+- **Controls:** back 30, back 20, play/pause, forward 20, forward 30, previous/next track, a seek bar, speed (0.75×–2×), a sleep timer (minutes or end of track), and restart.
+- Plays the next file in the folder automatically, which suits audiobooks split into chapters.
+- **Keyboard:** Space plays/pauses · ←/→ skips 20s · Shift+←/→ skips 30s · N/P goes to the next/previous track.
+- **Lock screen, headphones and car:** these work through the Media Session API (skip buttons there jump 30s).
+- Formats: mp3, m4a, **m4b**, aac, ogg, opus, flac, wav, webm. What actually plays depends on the browser. Safari doesn't play ogg/opus.
+
+## Run it in the background (Linux, systemd)
+
+`~/.config/systemd/user/audiostream.service`:
+```ini
+[Unit]
+Description=AudioStream
+
+[Service]
+ExecStart=/usr/bin/python3 /path/to/audiostream/server.py --root %h/Music --root %h/Audiobooks --password changeme
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+```bash
+systemctl --user enable --now audiostream
+```
+
+## Security notes
+
+- Only paths inside `--root` folders can be listed or streamed. `..` and symlinks that point outside a root are blocked.
+- This is plain HTTP. On your home network it's fine. To reach it from the internet, put it behind a reverse proxy with HTTPS (Caddy, nginx) or use Tailscale, and always set `--password`.
