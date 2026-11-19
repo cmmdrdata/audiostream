@@ -3,7 +3,7 @@
 Stream your music and audiobooks from your computer to any browser (desktop or phone).
 It remembers where you stopped in every file.
 
-**Needs:** Python 3.8+, and nothing else to install.
+**Needs:** Python 3.8+. ffmpeg is optional and is only used to split commercial compilations.
 
 ## Run it
 
@@ -40,6 +40,22 @@ Open `http://<computer-ip>:8000` in a browser on any device on your network.
 - **Keyboard:** Space plays/pauses · ←/→ skips 20s · Shift+←/→ skips 30s · N/P goes to the next/previous track.
 - **Lock screen, headphones and car:** these work through the Media Session API (skip buttons there jump 30s).
 - Formats: mp3, m4a, **m4b**, aac, ogg, opus, flac, wav, webm. What actually plays depends on the browser. Safari doesn't play ogg/opus.
+
+## Commercial breaks
+
+Old-time-radio style ads play **between** songs or chapters, never in the middle of one.
+
+```bash
+sudo apt install ffmpeg                       # used to split long ad compilations
+python3 server.py --root ~/Audiobooks --ads ~/Commercials
+```
+
+- The ads folder (subfolders too) can hold single commercials and long compilation MP3s. Compilations get split into individual ads at their silent gaps. This runs once in the background when the server starts. The results are cached in `ad_cues.json`, and changed files are rescanned.
+- Run `python3 server.py --ads ~/Commercials --scan-ads` to re-split everything and print each ad's start and end time. If a split is wrong, you can edit the times in `ad_cues.json` by hand.
+- **Per-listener setting:** the 📻 control in the player turns ads off, or on every 15 to 90 minutes, with 1 to 4 ads per break. It only appears when an ads folder is configured.
+- Only real listening time counts toward the next break. Seeking, pausing and ads themselves don't. Ads are picked at random and don't repeat until most of the others have played.
+- During a break, the skip buttons are hidden and a **Skip ad** button appears. Picking another track ends the break. Your place in the book is never changed by an ad.
+- With systemd, set `AUDIOSTREAM_ADS=` in `/etc/audiostream.env`.
 
 ## Start at boot (Linux, systemd)
 

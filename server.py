@@ -22,6 +22,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
+from ads import AdLibrary
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 AUDIO_EXTS = {
@@ -124,6 +125,25 @@ class ProgressStore:
                 u["last"] = None
             self._save()
 
+    DEFAULT_SETTINGS = {"ads_enabled": False, "ads_every_min": 30, "ads_per_break": 2}
+
+    def get_settings(self, user):
+        with self.lock:
+            return {**self.DEFAULT_SETTINGS, **self._u(user).get("settings", {})}
+
+    def set_settings(self, user, new):
+        with self.lock:
+            cur = {**self.DEFAULT_SETTINGS, **self._u(user).get("settings", {})}
+            if "ads_enabled" in new:
+                cur["ads_enabled"] = bool(new["ads_enabled"])
+            if "ads_every_min" in new:
+                cur["ads_every_min"] = max(1, min(600, int(new["ads_every_min"])))
+            if "ads_per_break" in new:
+                cur["ads_per_break"] = max(1, min(10, int(new["ads_per_break"])))
+            self._u(user)["settings"] = cur
+            self._save()
+            return cur
+
     def snapshot(self, user):
         with self.lock:
             u = self.data["users"].get(user) or {"files": {}, "last": None}
@@ -136,6 +156,7 @@ class Handler(BaseHTTPRequestHandler):
     store = None
     password = None
     show_hidden = False
+    ads = None
 
     # ---------- helpers ----------
     def log_message(self, fmt, *args):
@@ -241,6 +262,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_recent()
             if route == "/stream":
                 return self.stream()
+            if route == "/adstream":
+                return self.stream(ad=True)
+            if route == "/api/ads":
+                return self.send_json({"enabled": self.ads.enabled, "scanning": self.ads.scanning,
+                                       "segments": self.ads.segments()})
+            if route == "/api/settings":
+                user = self.require_user()
+                if user:
+                    self.send_json(self.store.get_settings(user))
+                return
             self.send_error_json(404, "not found")
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -248,8 +279,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         if not self.check_auth():
             return
-        if urlparse(self.path).path == "/stream":
-            return self.stream(head_only=True)
+        route = urlparse(self.path).path
+        if route in ("/stream", "/adstream"):
+            return self.stream(head_only=True, ad=(route == "/adstream"))
         self.send_response(200)
         self.end_headers()
 
@@ -280,6 +312,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/api/progress":
             return self.api_set_progress(user, payload)
+        if route == "/api/settings":
+            try:
+                return self.send_json(self.store.set_settings(user, payload))
+            except (TypeError, ValueError):
+                return self.send_error_json(400, "bad settings")
         if route == "/api/progress/clear":
             fp = self.safe_path(payload.get("path"))
             if not fp:
@@ -404,8 +441,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"last": last, "items": items[:20]})
 
     # ---------- streaming with HTTP Range ----------
-    def stream(self, head_only=False):
-        fp = self.safe_path(self.qs().get("path"))
+    def stream(self, head_only=False, ad=False):
+        if ad:
+            fp = self.ads.resolve(self.qs().get("f"))
+        else:
+            fp = self.safe_path(self.qs().get("path"))
         if not fp or not os.path.isfile(fp):
             return self.send_error_json(404, "file not found")
         ext = os.path.splitext(fp)[1].lower()
@@ -468,6 +508,10 @@ def main():
     ap.add_argument("--data", default=os.path.join(HERE, "progress.json"),
                     help="Where to store playback positions (default: progress.json next to server.py)")
     ap.add_argument("--show-hidden", action="store_true", help="Show dot-files/folders")
+    ap.add_argument("--ads", default=os.environ.get("AUDIOSTREAM_ADS"),
+                    help="Folder of commercials for commercial breaks. Or set AUDIOSTREAM_ADS.")
+    ap.add_argument("--scan-ads", action="store_true",
+                    help="Re-split every file in the ads folder now, print the results and exit")
     args = ap.parse_args()
 
     roots = args.root or [os.path.expanduser("~")]
@@ -480,12 +524,24 @@ def main():
     Handler.store = ProgressStore(args.data)
     Handler.password = args.password
     Handler.show_hidden = args.show_hidden
+    cues_path = os.path.join(os.path.dirname(os.path.abspath(args.data)), "ad_cues.json")
+    Handler.ads = AdLibrary(args.ads, cues_path, AUDIO_EXTS)
+    if args.ads and not Handler.ads.enabled:
+        print(f"Warning: ads folder not found: {args.ads}", file=sys.stderr)
+    if args.scan_ads:
+        Handler.ads.scan(force=True, verbose=True)
+        for seg in Handler.ads.segments():
+            print(f"  {seg['file']}: {seg['start']:.1f}s - {seg['end']}s")
+        return
+    if Handler.ads.enabled:
+        Handler.ads.scan_in_background()
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.daemon_threads = True
     print(f"AudioStream running on http://{args.host}:{args.port}")
     print("Browsing roots:", *roots, sep="\n  ")
     print("Password protection:", "ON" if args.password else "off")
+    print("Commercials folder:", Handler.ads.dir if Handler.ads.enabled else "off")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
