@@ -24,6 +24,11 @@ Open `http://<computer-ip>:8000` in a browser on any device on your network.
 
 ## Features
 
+- **Separate listeners:** the first time you open the page, you pick or create your name under "Who's listening?". The browser remembers your choice in a cookie for 10 years. Each listener has their own saved places, Resume buttons and Recent list. Tap **👤 name** at the top to switch listeners or delete one.
+  - Profiles go by name, not device. Pick the same name on your phone and your laptop and you continue where you left off on either one.
+  - Profiles aren't passwords. Anyone who can reach the server can choose any name, so `--password` is still what keeps strangers out.
+  - Positions saved by an older version are kept under a listener called **Default**.
+
 - Browse folders inside your roots, with breadcrumbs. Files sort naturally, so Chapter 2 comes before Chapter 10.
 - **Resume:** the position is saved every 5 seconds, on pause and when you close the tab. Reopening a file starts 2 seconds before where you stopped.
   - Each folder has a **▶ Resume** button for the last file you played in it.

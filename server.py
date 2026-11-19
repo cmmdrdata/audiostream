@@ -21,7 +21,8 @@ import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from http.cookies import SimpleCookie
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 AUDIO_EXTS = {
     ".mp3": "audio/mpeg",
@@ -47,19 +48,29 @@ def natural_key(s):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
 
+USER_RE = re.compile(r"^[\w .\-']{1,32}$")
+COOKIE_NAME = "audiostream_user"
+
+
 class ProgressStore:
-    """Remembers playback position per file in a JSON file."""
+    """Remembers playback position per user, per file, in a JSON file.
+
+    Layout: {"users": {"Alice": {"files": {path: {...}}, "last": path}, ...}}
+    """
 
     def __init__(self, path):
         self.path = path
         self.lock = threading.Lock()
-        self.data = {"files": {}, "last": None}
+        self.data = {"users": {}}
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    self.data = json.load(f)
-                self.data.setdefault("files", {})
-                self.data.setdefault("last", None)
+                    raw = json.load(f)
+                if "users" in raw:
+                    self.data = raw
+                elif raw.get("files"):
+                    # Migrate the old single-user format into a "Default" profile
+                    self.data["users"]["Default"] = {"files": raw["files"], "last": raw.get("last")}
             except Exception as e:
                 print(f"Warning: could not read {path}: {e}", file=sys.stderr)
 
@@ -69,33 +80,54 @@ class ProgressStore:
             json.dump(self.data, f, indent=1)
         os.replace(tmp, self.path)
 
-    def get(self, fpath):
-        with self.lock:
-            return self.data["files"].get(fpath)
+    def _u(self, user):
+        return self.data["users"].setdefault(user, {"files": {}, "last": None})
 
-    def set(self, fpath, position, duration):
+    def users(self):
         with self.lock:
+            return sorted(self.data["users"], key=str.lower)
+
+    def add_user(self, user):
+        with self.lock:
+            if user not in self.data["users"]:
+                self._u(user)
+                self._save()
+
+    def remove_user(self, user):
+        with self.lock:
+            if self.data["users"].pop(user, None) is not None:
+                self._save()
+
+    def get(self, user, fpath):
+        with self.lock:
+            return self._u(user)["files"].get(fpath)
+
+    def set(self, user, fpath, position, duration):
+        with self.lock:
+            u = self._u(user)
             finished = bool(duration) and position >= duration - 5
-            self.data["files"][fpath] = {
+            u["files"][fpath] = {
                 "position": round(float(position), 1),
                 "duration": round(float(duration or 0), 1),
                 "finished": finished,
                 "updated": time.time(),
             }
-            self.data["last"] = fpath
+            u["last"] = fpath
             self._save()
-            return self.data["files"][fpath]
+            return u["files"][fpath]
 
-    def clear(self, fpath):
+    def clear(self, user, fpath):
         with self.lock:
-            self.data["files"].pop(fpath, None)
-            if self.data.get("last") == fpath:
-                self.data["last"] = None
+            u = self._u(user)
+            u["files"].pop(fpath, None)
+            if u.get("last") == fpath:
+                u["last"] = None
             self._save()
 
-    def snapshot(self):
+    def snapshot(self, user):
         with self.lock:
-            return dict(self.data["files"]), self.data.get("last")
+            u = self.data["users"].get(user) or {"files": {}, "last": None}
+            return dict(u["files"]), u.get("last")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -153,6 +185,37 @@ class Handler(BaseHTTPRequestHandler):
                 continue
         return None
 
+    def current_user(self):
+        """Profile name from the cookie, or None if not picked / unknown."""
+        try:
+            c = SimpleCookie(self.headers.get("Cookie", ""))
+            if COOKIE_NAME in c:
+                name = unquote(c[COOKIE_NAME].value)
+                if name in self.store.users():
+                    return name
+        except Exception:
+            pass
+        return None
+
+    def require_user(self):
+        u = self.current_user()
+        if not u:
+            self.send_error_json(401, "no user selected")
+        return u
+
+    def send_json_cookie(self, obj, name):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        if name is None:
+            self.send_header("Set-Cookie", f"{COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax")
+        else:
+            self.send_header("Set-Cookie",
+                             f"{COOKIE_NAME}={quote(name)}; Path=/; Max-Age=315360000; SameSite=Lax")
+        self.end_headers()
+        self.wfile.write(body)
+
     def qs(self):
         return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
@@ -166,6 +229,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.serve_static("index.html")
             if route.startswith("/static/"):
                 return self.serve_static(route[len("/static/"):])
+            if route == "/api/users":
+                return self.send_json({"users": self.store.users(), "current": self.current_user()})
             if route == "/api/roots":
                 return self.api_roots()
             if route == "/api/list":
@@ -197,13 +262,29 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             return self.send_error_json(400, "bad json")
+        if route == "/api/login":
+            name = (payload.get("name") or "").strip()
+            if not USER_RE.match(name):
+                return self.send_error_json(400, "Name must be 1-32 letters, numbers, spaces, . - ' or _")
+            self.store.add_user(name)
+            return self.send_json_cookie({"ok": True, "current": name}, name)
+        if route == "/api/logout":
+            return self.send_json_cookie({"ok": True}, None)
+        if route == "/api/users/delete":
+            name = payload.get("name")
+            self.store.remove_user(name)
+            return self.send_json_cookie({"ok": True}, None) if name == self.current_user() \
+                else self.send_json({"ok": True})
+        user = self.require_user()
+        if not user:
+            return
         if route == "/api/progress":
-            return self.api_set_progress(payload)
+            return self.api_set_progress(user, payload)
         if route == "/api/progress/clear":
             fp = self.safe_path(payload.get("path"))
             if not fp:
                 return self.send_error_json(403, "path not allowed")
-            self.store.clear(fp)
+            self.store.clear(user, fp)
             return self.send_json({"ok": True})
         self.send_error_json(404, "not found")
 
@@ -232,7 +313,7 @@ class Handler(BaseHTTPRequestHandler):
         if not path or not os.path.isdir(path):
             return self.send_error_json(403, "path not allowed or not a directory")
 
-        files_progress, last = self.store.snapshot()
+        files_progress, last = self.store.snapshot(self.current_user())
         dirs, files = [], []
         try:
             entries = list(os.scandir(path))
@@ -286,12 +367,15 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def api_get_progress(self):
+        user = self.require_user()
+        if not user:
+            return
         fp = self.safe_path(self.qs().get("path"))
         if not fp:
             return self.send_error_json(403, "path not allowed")
-        self.send_json({"path": fp, "progress": self.store.get(fp)})
+        self.send_json({"path": fp, "progress": self.store.get(user, fp)})
 
-    def api_set_progress(self, payload):
+    def api_set_progress(self, user, payload):
         fp = self.safe_path(payload.get("path"))
         if not fp or not os.path.isfile(fp):
             return self.send_error_json(403, "path not allowed")
@@ -300,10 +384,13 @@ class Handler(BaseHTTPRequestHandler):
             dur = float(payload.get("duration", 0) or 0)
         except (TypeError, ValueError):
             return self.send_error_json(400, "bad numbers")
-        self.send_json({"ok": True, "progress": self.store.set(fp, pos, dur)})
+        self.send_json({"ok": True, "progress": self.store.set(user, fp, pos, dur)})
 
     def api_recent(self):
-        files_progress, last = self.store.snapshot()
+        user = self.require_user()
+        if not user:
+            return
+        files_progress, last = self.store.snapshot(user)
         items = []
         for fp, p in files_progress.items():
             if os.path.isfile(fp) and self.safe_path(fp):
