@@ -65,6 +65,10 @@ Notes:
 - If your music is on a USB drive or network share, uncomment `RequiresMountsFor=` in the service file so it waits for the mount.
 - Folder paths in `AUDIOSTREAM_ROOTS` can't contain spaces. Symlink a folder with spaces in its name, e.g. `ln -s "/mnt/My Books" ~/books`.
 
+## Behind nginx at /audiostream/
+
+`deploy/nginx-rpi.conf` puts several apps behind one port, with AudioStream at `http://host:8080/audiostream/`. The page uses relative URLs, so it works under any path prefix. Set `AUDIOSTREAM_HOST=127.0.0.1` and `AUDIOSTREAM_PORT=8082` in `/etc/audiostream.env`. With those settings only nginx can reach the app.
+
 ## Security notes
 
 - Only paths inside `--root` folders can be listed or streamed. `..` and symlinks that point outside a root are blocked.

@@ -177,7 +177,7 @@ let me = null;
 
 async function showPicker() {
   if (current) { saveProgress(true); audio.pause(); }
-  const { users } = await api('/api/users');
+  const { users } = await api('api/users');
   $('#userList').innerHTML = users.map(u => `
     <div class="u"><button data-u="${esc(u)}">👤 ${esc(u)}</button>
     <button class="del" data-del="${esc(u)}" title="Delete ${esc(u)} and their saved places">✕</button></div>`).join('')
@@ -185,7 +185,7 @@ async function showPicker() {
   $('#userList').querySelectorAll('[data-u]').forEach(b => b.onclick = () => pickUser(b.dataset.u));
   $('#userList').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
     if (!confirm(`Delete "${b.dataset.del}" and all their saved places?`)) return;
-    await api('/api/users/delete', { method: 'POST', body: JSON.stringify({ name: b.dataset.del }) });
+    await api('api/users/delete', { method: 'POST', body: JSON.stringify({ name: b.dataset.del }) });
     showPicker();
   });
   $('#pickErr').textContent = '';
@@ -196,18 +196,18 @@ $('#newUserForm').onsubmit = e => { e.preventDefault(); pickUser($('#newUser').v
 
 async function pickUser(name) {
   try {
-    await api('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    await api('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
   } catch (err) { $('#pickErr').textContent = err.message; return; }
   location.reload();   // fresh start as the new listener
 }
 
 async function init() {
-  const u = await api('/api/users');
+  const u = await api('api/users');
   if (!u.current) return showPicker();
   me = u.current;
   $('#userBtn').textContent = '👤 ' + me;
   $('#userBtn').onclick = showPicker;
-  roots = (await api('/api/roots')).roots;
+  roots = (await api('api/roots')).roots;
   const sel = $('#rootSel');
   sel.innerHTML = roots.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
   sel.onchange = () => openDir(sel.value);
@@ -215,7 +215,7 @@ async function init() {
   $('#homeBtn').onclick = showRecent;
 
   // Restore the last-played track into the player (paused, at saved position)
-  const recent = await api('/api/recent');
+  const recent = await api('api/recent');
   if (recent.last) {
     const item = recent.items.find(i => i.path === recent.last);
     if (item) await loadTrack(item.path, { autoplay: false });
@@ -226,7 +226,7 @@ async function init() {
 }
 
 async function openDir(path) {
-  const d = await api('/api/list?path=' + enc(path));
+  const d = await api('api/list?path=' + enc(path));
   currentDir = d;
   LS.set('lastDir:' + me, d.path);
   if (d.root) $('#rootSel').value = d.root;
@@ -292,7 +292,7 @@ function renderDir(d) {
 }
 
 async function showRecent() {
-  const r = await api('/api/recent');
+  const r = await api('api/recent');
   currentDir = null;
   $('#crumbs').textContent = 'Recently played';
   let html = `<h2>Recently played</h2>`;
@@ -320,7 +320,7 @@ async function showRecent() {
 async function ensureQueueFor(path) {
   const folder = path.replace(/[\\/][^\\/]*$/, '');
   if (queue.some(f => f.path === path)) return;
-  try { queue = (await api('/api/list?path=' + enc(folder))).files; } catch { queue = []; }
+  try { queue = (await api('api/list?path=' + enc(folder))).files; } catch { queue = []; }
 }
 
 async function loadTrack(path, { autoplay = true, fromStart = false } = {}) {
@@ -332,12 +332,12 @@ async function loadTrack(path, { autoplay = true, fromStart = false } = {}) {
   let start = 0;
   if (!fromStart) {
     try {
-      const { progress } = await api('/api/progress?path=' + enc(path));
+      const { progress } = await api('api/progress?path=' + enc(path));
       if (progress && !progress.finished) start = Math.max(0, progress.position - 2); // back up 2s for context
     } catch {}
   }
   pendingSeek = start;
-  audio.src = '/stream?path=' + enc(path);
+  audio.src = 'stream?path=' + enc(path);
   audio.playbackRate = parseFloat($('#speedSel').value);
   $('#np-title').textContent = current.name;
   $('#np-folder').textContent = folder;
@@ -385,9 +385,9 @@ function saveProgress(force = false) {
   lastSaved = Date.now();
   const body = JSON.stringify({ path: current.path, position: audio.currentTime, duration: audio.duration });
   if (force && navigator.sendBeacon) {
-    navigator.sendBeacon('/api/progress', new Blob([body], { type: 'application/json' }));
+    navigator.sendBeacon('api/progress', new Blob([body], { type: 'application/json' }));
   } else {
-    fetch('/api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    fetch('api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
   }
 }
 window.addEventListener('pagehide', () => saveProgress(true));
