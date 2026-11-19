@@ -140,11 +140,10 @@
       </label>
       <span id="adsCtl">
         <label title="Commercial breaks between songs/chapters (saved per listener)">📻
-          <select id="adsEvery">
-            <option value="0">Ads off</option><option value="15">every 15 min</option>
-            <option value="30">every 30 min</option><option value="45">every 45 min</option>
-            <option value="60">every 60 min</option><option value="90">every 90 min</option>
-          </select>
+          <input type="checkbox" id="adsOn"> Ads
+        </label>
+        <label title="Minimum listening minutes between commercial breaks">min
+          <input type="number" id="adsEvery" min="1" max="600" step="1" style="width:4.2em"> min apart
         </label>
         <select id="adsCount" title="Commercials per break">
           <option value="1">×1</option><option value="2">×2</option><option value="3">×3</option><option value="4">×4</option>
@@ -504,20 +503,22 @@ async function loadAdSettings() {
   listened = LS.get('adListened:' + me, 0);
   if (!adSegments.length) return;           // no ads folder: hide the control
   $('#adsCtl').style.display = 'inline';
-  $('#adsEvery').value = adSettings.ads_enabled ? String(adSettings.ads_every_min) : '0';
-  if (!$('#adsEvery').value) $('#adsEvery').value = '30';
+  $('#adsOn').checked = adSettings.ads_enabled;
+  $('#adsEvery').value = String(adSettings.ads_every_min);
   $('#adsCount').value = String(adSettings.ads_per_break);
-  $('#adsCount').disabled = !adSettings.ads_enabled;
+  $('#adsEvery').disabled = $('#adsCount').disabled = !adSettings.ads_enabled;
 }
 async function saveAdSettings() {
-  const every = parseInt($('#adsEvery').value);
-  const body = { ads_enabled: every > 0, ads_per_break: parseInt($('#adsCount').value) };
-  if (every > 0) body.ads_every_min = every;
-  $('#adsCount').disabled = every === 0;
+  const on = $('#adsOn').checked;
+  const every = Math.max(1, Math.min(600, parseInt($('#adsEvery').value) || 30));
+  $('#adsEvery').value = every;
+  const body = { ads_enabled: on, ads_every_min: every, ads_per_break: parseInt($('#adsCount').value) };
+  $('#adsEvery').disabled = $('#adsCount').disabled = !on;
   try {
     adSettings = await api('api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   } catch {}
 }
+$('#adsOn').onchange = saveAdSettings;
 $('#adsEvery').onchange = saveAdSettings;
 $('#adsCount').onchange = saveAdSettings;
 

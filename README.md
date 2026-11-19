@@ -52,7 +52,7 @@ python3 server.py --root ~/Audiobooks --ads ~/Commercials
 
 - The ads folder (subfolders too) can hold single commercials and long compilation MP3s. Compilations get split into individual ads at their silent gaps. This runs once in the background when the server starts. The results are cached in `ad_cues.json`, and changed files are rescanned.
 - Run `python3 server.py --ads ~/Commercials --scan-ads` to re-split everything and print each ad's start and end time. If a split is wrong, you can edit the times in `ad_cues.json` by hand.
-- **Per-listener setting:** the 📻 control in the player turns ads off, or on every 15 to 90 minutes, with 1 to 4 ads per break. It only appears when an ads folder is configured.
+- **Per-listener settings:** in the player, the 📻 **Ads** checkbox turns breaks on or off. **min … min apart** sets the minimum listening time between breaks (1 to 600 minutes), and **×N** sets how many ads play per break (1 to 4). Once the minimum has passed, the break waits for the next gap between songs or chapters. The control only appears when an ads folder is configured.
 - Only real listening time counts toward the next break. Seeking, pausing and ads themselves don't. Ads are picked at random and don't repeat until most of the others have played.
 - During a break, the skip buttons are hidden and a **Skip ad** button appears. Picking another track ends the break. Your place in the book is never changed by an ad.
 - With systemd, set `AUDIOSTREAM_ADS=` in `/etc/audiostream.env`.
