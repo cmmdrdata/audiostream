@@ -41,23 +41,29 @@ Open `http://<computer-ip>:8000` in a browser on any device on your network.
 - **Lock screen, headphones and car:** these work through the Media Session API (skip buttons there jump 30s).
 - Formats: mp3, m4a, **m4b**, aac, ogg, opus, flac, wav, webm. What actually plays depends on the browser. Safari doesn't play ogg/opus.
 
-## Run it in the background (Linux, systemd)
+## Start at boot (Linux, systemd)
 
-`~/.config/systemd/user/audiostream.service`:
-```ini
-[Unit]
-Description=AudioStream
-
-[Service]
-ExecStart=/usr/bin/python3 /path/to/audiostream/server.py --root %h/Music --root %h/Audiobooks --password changeme
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-```
 ```bash
-systemctl --user enable --now audiostream
+sudo ./deploy/install.sh            # runs the service as you (the user who ran sudo)
+sudo nano /etc/audiostream.env      # set your folders, port and password
+sudo systemctl restart audiostream
 ```
+
+The installer puts `deploy/audiostream.service` in `/etc/systemd/system/`, filling in your username and this folder's path, then enables it. After that it starts at every boot, even if nobody logs in.
+
+Useful commands:
+
+```bash
+systemctl status audiostream        # is it running?
+journalctl -u audiostream -f        # live log
+sudo systemctl restart audiostream  # run this after a git pull or a settings change
+sudo systemctl disable --now audiostream   # turn it off
+```
+
+Notes:
+- The service can read your files but can't change them. It can only write `progress.json` in the app folder.
+- If your music is on a USB drive or network share, uncomment `RequiresMountsFor=` in the service file so it waits for the mount.
+- Folder paths in `AUDIOSTREAM_ROOTS` can't contain spaces. Symlink a folder with spaces in its name, e.g. `ln -s "/mnt/My Books" ~/books`.
 
 ## Security notes
 
