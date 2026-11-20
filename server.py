@@ -287,6 +287,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if route in ("/", "/index.html"):
                 return self.serve_static("index.html")
+            if route == "/favicon.ico":          # browsers ask for this on their own
+                return self.serve_static("favicon-32.png")
+            if route == "/apple-touch-icon.png":
+                return self.serve_static("apple-touch-icon.png")
             if route.startswith("/static/"):
                 return self.serve_static(route[len("/static/"):])
             if route == "/api/users":

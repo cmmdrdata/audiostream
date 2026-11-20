@@ -33,7 +33,7 @@ Open `http://<computer-ip>:8000` in a browser on any device on your network.
 - **Resume:** the position is saved every 5 seconds, on pause and when you close the tab. Reopening a file starts 2 seconds before where you stopped.
   - Each folder has a **▶ Resume** button for the last file you played in it.
   - Folders you've listened in show an orange dot.
-  - The **Recent** view lists your last 20 files with progress bars.
+  - The **Recent** view lists your last 20 files with progress bars and when each was last played (Today, Yesterday, a weekday in the past week, or the date).
   - When you open the page, the last file you played is loaded and ready.
 - **Controls:** back 30, back 20, play/pause, forward 20, forward 30, previous/next track, a seek bar, speed (0.75×–2×), a sleep timer (minutes or end of track), and restart.
 - **Reconnects by itself:** if the network drops or the stream stalls for 20 seconds, the player retries after 1, 2, 4, 8, 15 and then every 30 seconds, and picks up at the exact second it stopped. Pressing ▶ retries immediately. If you paused, it stays paused. The server drops connections that have been silent for 2 minutes, so a phone that disappears can't tie it up.
