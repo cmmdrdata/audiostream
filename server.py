@@ -152,6 +152,9 @@ class ProgressStore:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "AudioStream/1.0"
+    # Give up on a connection that sends or accepts nothing for this long.
+    # Without it, a phone that vanishes mid-stream can tie up a thread forever.
+    timeout = 120
     roots = []
     store = None
     password = None
@@ -160,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- helpers ----------
     def log_message(self, fmt, *args):
-        if "/api/progress" in (self.path or ""):
+        if "/api/progress" in (getattr(self, "path", None) or ""):
             return  # too chatty
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
@@ -273,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(self.store.get_settings(user))
                 return
             self.send_error_json(404, "not found")
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass
 
     def do_HEAD(self):
@@ -494,6 +497,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
                 except (BrokenPipeError, ConnectionResetError):
                     return  # browser seeked / closed - normal
+                except TimeoutError:
+                    # Client stopped reading (asleep / gone). Drop it; the
+                    # browser re-requests the rest with a Range header if needed.
+                    self.close_connection = True
+                    return
                 remaining -= len(chunk)
 
 

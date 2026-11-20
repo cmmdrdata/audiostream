@@ -193,7 +193,7 @@ const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','
 let me = null;
 
 async function showPicker() {
-  if (current) { saveProgress(true); audio.pause(); }
+  if (current) { saveProgress(true); userPause(); }
   const { users } = await api('api/users');
   $('#userList').innerHTML = users.map(u => `
     <div class="u"><button data-u="${esc(u)}">👤 ${esc(u)}</button>
@@ -356,6 +356,8 @@ async function loadTrack(path, { autoplay = true, fromStart = false } = {}) {
     } catch {}
   }
   pendingSeek = start;
+  lastGood = start; everPlayed = false; resetRetry();
+  if (autoplay) wantPlaying = true;
   audio.src = 'stream?path=' + enc(path);
   audio.playbackRate = parseFloat($('#speedSel').value);
   $('#np-title').textContent = current.name;
@@ -398,22 +400,105 @@ audio.addEventListener('timeupdate', () => {
   countListening();
   if (!seeking && audio.duration) $('#seekBar').value = Math.round(audio.currentTime / audio.duration * 1000);
   $('#cur').textContent = fmt(audio.currentTime);
+  if (audio.currentTime > 0 && pendingSeek == null) lastGood = audio.currentTime;
   if (Date.now() - lastSaved > 5000 && !audio.paused) saveProgress();
   if ('mediaSession' in navigator && audio.duration && navigator.mediaSession.setPositionState) {
     try { navigator.mediaSession.setPositionState({ duration: audio.duration, position: audio.currentTime, playbackRate: audio.playbackRate }); } catch {}
   }
 });
 audio.addEventListener('play', () => { $('#playBtn').textContent = '⏸'; });
-audio.addEventListener('pause', () => { $('#playBtn').textContent = '▶'; if (!adBreak) saveProgress(true); });
+audio.addEventListener('pause', () => {
+  $('#playBtn').textContent = '▶';
+  if (!adBreak) saveProgress(true);
+});
 audio.addEventListener('ended', () => {
   if (adBreak) return nextAd();
   saveProgress(true);
-  if (sleepAtEnd) { sleepAtEnd = false; $('#sleepSel').value = '0'; return; }
+  if (sleepAtEnd) { sleepAtEnd = false; wantPlaying = false; $('#sleepSel').value = '0'; return; }
   nextTrackOrBreak();
 });
 audio.addEventListener('error', () => {
+  if (recovering) return;
   if (adBreak) return nextAd();   // unplayable ad: just move on
-  if (audio.src) $('#np-folder').textContent = '⚠ This browser cannot play this file format.';
+  if (!current) return;
+  const code = audio.error ? audio.error.code : 0;
+  if (code === 4 && !everPlayed) {
+    // "Not supported" before it ever played: ask the server if the file is reachable.
+    // Reachable = the browser really can't play this format. Unreachable = network, so retry.
+    const path = current.path;
+    fetch('stream?path=' + enc(path), { method: 'HEAD', cache: 'no-store' })
+      .then(r => {
+        if (!current || current.path !== path) return;
+        if (r.ok) { resetRetry(); $('#np-folder').textContent = '⚠ This browser cannot play this file format.'; }
+        else recover('error 4, server said ' + r.status);
+      })
+      .catch(() => recover('error 4, server unreachable'));
+    return;
+  }
+  recover('error ' + code);
+});
+
+// ---------- Auto-retry after network drops ----------
+let wantPlaying = false;     // the listener wants sound (not paused by them)
+let lastGood = 0;            // last position that actually played
+let everPlayed = false;
+let recovering = false;
+let lastTick = Date.now(), lastTickPos = -1;
+const retry = { n: 0, timer: null };
+const RETRY_DELAYS = [1, 2, 4, 8, 15, 30];   // seconds; keeps trying every 30s after that
+
+// A pause the listener asked for (button, lock screen, sleep timer): stop retrying too
+function userPause() {
+  wantPlaying = false;
+  clearTimeout(retry.timer); retry.timer = null;
+  audio.pause();
+}
+function togglePlayIfPaused() { if (audio.paused || audio.error || retry.n) togglePlay(); }
+
+function resetRetry() {
+  clearTimeout(retry.timer); retry.timer = null;
+  if (retry.n && current) $('#np-folder').textContent = current.folder;
+  retry.n = 0;
+}
+
+function recover(reason) {
+  if (adBreak || !current || retry.timer) return;
+  const delay = RETRY_DELAYS[Math.min(retry.n, RETRY_DELAYS.length - 1)];
+  retry.n++;
+  console.log('[AudioStream] reconnecting:', reason, 'attempt', retry.n, 'at', fmt(lastGood));
+  $('#np-folder').textContent = `⚠ Connection lost - retrying in ${delay}s (try ${retry.n})…`;
+  retry.timer = setTimeout(() => {
+    retry.timer = null;
+    if (!current || adBreak) return;
+    recovering = true;
+    pendingSeek = lastGood;
+    // a fresh URL so the browser doesn't reuse the broken connection
+    audio.src = 'stream?path=' + enc(current.path) + '&retry=' + Date.now();
+    audio.playbackRate = parseFloat($('#speedSel').value);
+    recovering = false;
+    if (wantPlaying) audio.play().catch(() => {});
+    else audio.load();
+  }, delay * 1000);
+}
+
+audio.addEventListener('playing', () => {
+  wantPlaying = true; everPlayed = true;
+  if (retry.n) { console.log('[AudioStream] reconnected'); resetRetry(); }
+});
+
+// Watchdog: playing but the clock hasn't moved for 20s = silently stalled stream
+setInterval(() => {
+  const pos = audio.currentTime;
+  if (pos !== lastTickPos || audio.paused || !wantPlaying) { lastTick = Date.now(); lastTickPos = pos; return; }
+  if (Date.now() - lastTick < 20000 || retry.timer) return;
+  lastTick = Date.now();
+  if (adBreak) nextAd();          // stuck ad: skip it
+  else recover('stalled');
+}, 5000);
+
+// Phone came back online / tab woke up: retry right away instead of waiting
+window.addEventListener('online', () => {
+  if (retry.timer) { clearTimeout(retry.timer); retry.timer = null; retry.n = Math.max(0, retry.n - 1); recover('back online'); }
 });
 
 function saveProgress(force = false) {
@@ -436,7 +521,14 @@ function skip(sec) {
 }
 function togglePlay() {
   if (!current) return;
-  audio.paused ? audio.play() : audio.pause();
+  if (audio.error || retry.n) {            // broken: pressing play retries now
+    wantPlaying = true;
+    clearTimeout(retry.timer); retry.timer = null;
+    retry.n = 0; recover('play pressed');
+    return;
+  }
+  if (audio.paused) { wantPlaying = true; audio.play().catch(() => {}); }
+  else userPause();
 }
 function trackIndex() { return queue.findIndex(f => f.path === current?.path); }
 function nextTrack() {
@@ -475,7 +567,7 @@ $('#sleepSel').onchange = e => {
   clearTimeout(sleepTimer); sleepAtEnd = false;
   const v = parseInt(e.target.value);
   if (v === -1) sleepAtEnd = true;
-  else if (v > 0) sleepTimer = setTimeout(() => { audio.pause(); e.target.value = '0'; }, v * 60000);
+  else if (v > 0) sleepTimer = setTimeout(() => { userPause(); e.target.value = '0'; }, v * 60000);
 };
 
 document.addEventListener('keydown', e => {
@@ -532,7 +624,10 @@ function countListening() {
   lastT = t;
   if (Math.random() < 0.05) LS.set('adListened:' + me, Math.round(listened));
 }
-audio.addEventListener('seeking', () => { lastT = null; });
+audio.addEventListener('seeking', () => {
+  lastT = null;
+  if (!adBreak && pendingSeek == null && audio.currentTime > 0) lastGood = audio.currentTime;  // remember jumps too
+});
 
 function nextTrackOrBreak() {
   const i = trackIndex();
@@ -611,8 +706,8 @@ function setMediaSession() {
   });
   const ms = navigator.mediaSession;
   const h = (a, fn) => { try { ms.setActionHandler(a, fn); } catch {} };
-  h('play', () => audio.play());
-  h('pause', () => audio.pause());
+  h('play', () => togglePlayIfPaused());
+  h('pause', () => userPause());
   h('seekbackward', d => skip(-(d.seekOffset || 30)));
   h('seekforward', d => skip(d.seekOffset || 30));
   h('previoustrack', prevTrack);
