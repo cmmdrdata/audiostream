@@ -70,6 +70,11 @@
   .controls .skip { font-weight: 600; font-variant-numeric: tabular-nums; }
   .extras { display: flex; justify-content: center; gap: 8px; margin-top: 8px; font-size: 13px; }
   .extras select, .extras button { padding: 4px 8px; font-size: 13px; }
+  #player.ad { border-top-color: var(--accent); }
+  #player.ad .skip, #player.ad #prevBtn, #player.ad #restartBtn, #player.ad .seek input { visibility: hidden; }
+  #skipAdBtn { display: none; }
+  #player.ad #skipAdBtn { display: inline-block; background: var(--accent); color: #1a1a1a; border: none; font-weight: 600; }
+  #adsCtl { display: none; }
   .hint { text-align: center; font-size: 11px; color: var(--muted); margin-top: 6px; }
   @media (max-width: 520px) { .hint { display: none; } .controls button { min-width: 46px; } }
 </style>
@@ -117,6 +122,7 @@
       <button class="skip" data-skip="20" title="Forward 20s">20↻</button>
       <button class="skip" data-skip="30" title="Forward 30s">30↻</button>
       <button id="nextBtn" title="Next track">⏭</button>
+      <button id="skipAdBtn" title="Skip this commercial">Skip ad ⏭</button>
     </div>
     <div class="extras">
       <label>Speed
@@ -132,6 +138,17 @@
           <option value="60">60 min</option><option value="-1">End of track</option>
         </select>
       </label>
+      <span id="adsCtl">
+        <label title="Commercial breaks between songs/chapters (saved per listener)">📻
+          <input type="checkbox" id="adsOn"> Ads
+        </label>
+        <label title="Minimum listening minutes between commercial breaks">min
+          <input type="number" id="adsEvery" min="1" max="600" step="1" style="width:4.2em"> min apart
+        </label>
+        <select id="adsCount" title="Commercials per break">
+          <option value="1">×1</option><option value="2">×2</option><option value="3">×3</option><option value="4">×4</option>
+        </select>
+      </span>
       <button id="restartBtn" title="Restart this track from 0:00">⟲ Restart</button>
     </div>
     <div class="hint">Keys: Space play/pause · ←/→ 20s · Shift+←/→ 30s · N/P next/prev track</div>
@@ -176,8 +193,8 @@ const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','
 let me = null;
 
 async function showPicker() {
-  if (current) { saveProgress(true); audio.pause(); }
-  const { users } = await api('/api/users');
+  if (current) { saveProgress(true); userPause(); }
+  const { users } = await api('api/users');
   $('#userList').innerHTML = users.map(u => `
     <div class="u"><button data-u="${esc(u)}">👤 ${esc(u)}</button>
     <button class="del" data-del="${esc(u)}" title="Delete ${esc(u)} and their saved places">✕</button></div>`).join('')
@@ -185,7 +202,7 @@ async function showPicker() {
   $('#userList').querySelectorAll('[data-u]').forEach(b => b.onclick = () => pickUser(b.dataset.u));
   $('#userList').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
     if (!confirm(`Delete "${b.dataset.del}" and all their saved places?`)) return;
-    await api('/api/users/delete', { method: 'POST', body: JSON.stringify({ name: b.dataset.del }) });
+    await api('api/users/delete', { method: 'POST', body: JSON.stringify({ name: b.dataset.del }) });
     showPicker();
   });
   $('#pickErr').textContent = '';
@@ -196,18 +213,19 @@ $('#newUserForm').onsubmit = e => { e.preventDefault(); pickUser($('#newUser').v
 
 async function pickUser(name) {
   try {
-    await api('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    await api('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
   } catch (err) { $('#pickErr').textContent = err.message; return; }
   location.reload();   // fresh start as the new listener
 }
 
 async function init() {
-  const u = await api('/api/users');
+  const u = await api('api/users');
   if (!u.current) return showPicker();
   me = u.current;
   $('#userBtn').textContent = '👤 ' + me;
   $('#userBtn').onclick = showPicker;
-  roots = (await api('/api/roots')).roots;
+  roots = (await api('api/roots')).roots;
+  await loadAdSettings();
   const sel = $('#rootSel');
   sel.innerHTML = roots.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
   sel.onchange = () => openDir(sel.value);
@@ -215,7 +233,7 @@ async function init() {
   $('#homeBtn').onclick = showRecent;
 
   // Restore the last-played track into the player (paused, at saved position)
-  const recent = await api('/api/recent');
+  const recent = await api('api/recent');
   if (recent.last) {
     const item = recent.items.find(i => i.path === recent.last);
     if (item) await loadTrack(item.path, { autoplay: false });
@@ -226,7 +244,7 @@ async function init() {
 }
 
 async function openDir(path) {
-  const d = await api('/api/list?path=' + enc(path));
+  const d = await api('api/list?path=' + enc(path));
   currentDir = d;
   LS.set('lastDir:' + me, d.path);
   if (d.root) $('#rootSel').value = d.root;
@@ -292,7 +310,7 @@ function renderDir(d) {
 }
 
 async function showRecent() {
-  const r = await api('/api/recent');
+  const r = await api('api/recent');
   currentDir = null;
   $('#crumbs').textContent = 'Recently played';
   let html = `<h2>Recently played</h2>`;
@@ -320,10 +338,11 @@ async function showRecent() {
 async function ensureQueueFor(path) {
   const folder = path.replace(/[\\/][^\\/]*$/, '');
   if (queue.some(f => f.path === path)) return;
-  try { queue = (await api('/api/list?path=' + enc(folder))).files; } catch { queue = []; }
+  try { queue = (await api('api/list?path=' + enc(folder))).files; } catch { queue = []; }
 }
 
 async function loadTrack(path, { autoplay = true, fromStart = false } = {}) {
+  if (adBreak) cancelBreak();
   if (current && current.path !== path) saveProgress(true);
   await ensureQueueFor(path);
   const folder = path.replace(/[\\/][^\\/]*$/, '');
@@ -332,12 +351,14 @@ async function loadTrack(path, { autoplay = true, fromStart = false } = {}) {
   let start = 0;
   if (!fromStart) {
     try {
-      const { progress } = await api('/api/progress?path=' + enc(path));
+      const { progress } = await api('api/progress?path=' + enc(path));
       if (progress && !progress.finished) start = Math.max(0, progress.position - 2); // back up 2s for context
     } catch {}
   }
   pendingSeek = start;
-  audio.src = '/stream?path=' + enc(path);
+  lastGood = start; everPlayed = false; resetRetry();
+  if (autoplay) wantPlaying = true;
+  audio.src = 'stream?path=' + enc(path);
   audio.playbackRate = parseFloat($('#speedSel').value);
   $('#np-title').textContent = current.name;
   $('#np-folder').textContent = folder;
@@ -355,6 +376,11 @@ function markPlayingInList() {
 }
 
 audio.addEventListener('loadedmetadata', () => {
+  if (adBreak) {
+    const seg = adBreak.list[adBreak.i];
+    if (seg.start > 0) audio.currentTime = seg.start;
+    return;
+  }
   if (pendingSeek != null) {
     if (pendingSeek < audio.duration - 1) audio.currentTime = pendingSeek;
     pendingSeek = null;
@@ -362,52 +388,156 @@ audio.addEventListener('loadedmetadata', () => {
   $('#dur').textContent = fmt(audio.duration);
 });
 audio.addEventListener('timeupdate', () => {
+  if (adBreak) {
+    const seg = adBreak.list[adBreak.i];
+    const end = seg.end ?? audio.duration;
+    $('#cur').textContent = fmt(audio.currentTime - seg.start);
+    $('#dur').textContent = fmt((end || 0) - seg.start);
+    if (end) $('#seekBar').value = Math.round((audio.currentTime - seg.start) / (end - seg.start) * 1000);
+    if (seg.end != null && audio.currentTime >= seg.end) nextAd();
+    return;
+  }
+  countListening();
   if (!seeking && audio.duration) $('#seekBar').value = Math.round(audio.currentTime / audio.duration * 1000);
   $('#cur').textContent = fmt(audio.currentTime);
+  if (audio.currentTime > 0 && pendingSeek == null) lastGood = audio.currentTime;
   if (Date.now() - lastSaved > 5000 && !audio.paused) saveProgress();
   if ('mediaSession' in navigator && audio.duration && navigator.mediaSession.setPositionState) {
     try { navigator.mediaSession.setPositionState({ duration: audio.duration, position: audio.currentTime, playbackRate: audio.playbackRate }); } catch {}
   }
 });
 audio.addEventListener('play', () => { $('#playBtn').textContent = '⏸'; });
-audio.addEventListener('pause', () => { $('#playBtn').textContent = '▶'; saveProgress(true); });
+audio.addEventListener('pause', () => {
+  $('#playBtn').textContent = '▶';
+  if (!adBreak) saveProgress(true);
+});
 audio.addEventListener('ended', () => {
+  if (adBreak) return nextAd();
   saveProgress(true);
-  if (sleepAtEnd) { sleepAtEnd = false; $('#sleepSel').value = '0'; return; }
-  nextTrack();
+  if (sleepAtEnd) { sleepAtEnd = false; wantPlaying = false; $('#sleepSel').value = '0'; return; }
+  nextTrackOrBreak();
 });
 audio.addEventListener('error', () => {
-  if (audio.src) $('#np-folder').textContent = '⚠ This browser cannot play this file format.';
+  if (recovering) return;
+  if (adBreak) return nextAd();   // unplayable ad: just move on
+  if (!current) return;
+  const code = audio.error ? audio.error.code : 0;
+  if (code === 4 && !everPlayed) {
+    // "Not supported" before it ever played: ask the server if the file is reachable.
+    // Reachable = the browser really can't play this format. Unreachable = network, so retry.
+    const path = current.path;
+    fetch('stream?path=' + enc(path), { method: 'HEAD', cache: 'no-store' })
+      .then(r => {
+        if (!current || current.path !== path) return;
+        if (r.ok) { resetRetry(); $('#np-folder').textContent = '⚠ This browser cannot play this file format.'; }
+        else recover('error 4, server said ' + r.status);
+      })
+      .catch(() => recover('error 4, server unreachable'));
+    return;
+  }
+  recover('error ' + code);
+});
+
+// ---------- Auto-retry after network drops ----------
+let wantPlaying = false;     // the listener wants sound (not paused by them)
+let lastGood = 0;            // last position that actually played
+let everPlayed = false;
+let recovering = false;
+let lastTick = Date.now(), lastTickPos = -1;
+const retry = { n: 0, timer: null };
+const RETRY_DELAYS = [1, 2, 4, 8, 15, 30];   // seconds; keeps trying every 30s after that
+
+// A pause the listener asked for (button, lock screen, sleep timer): stop retrying too
+function userPause() {
+  wantPlaying = false;
+  clearTimeout(retry.timer); retry.timer = null;
+  audio.pause();
+}
+function togglePlayIfPaused() { if (audio.paused || audio.error || retry.n) togglePlay(); }
+
+function resetRetry() {
+  clearTimeout(retry.timer); retry.timer = null;
+  if (retry.n && current) $('#np-folder').textContent = current.folder;
+  retry.n = 0;
+}
+
+function recover(reason) {
+  if (adBreak || !current || retry.timer) return;
+  const delay = RETRY_DELAYS[Math.min(retry.n, RETRY_DELAYS.length - 1)];
+  retry.n++;
+  console.log('[AudioStream] reconnecting:', reason, 'attempt', retry.n, 'at', fmt(lastGood));
+  $('#np-folder').textContent = `⚠ Connection lost - retrying in ${delay}s (try ${retry.n})…`;
+  retry.timer = setTimeout(() => {
+    retry.timer = null;
+    if (!current || adBreak) return;
+    recovering = true;
+    pendingSeek = lastGood;
+    // a fresh URL so the browser doesn't reuse the broken connection
+    audio.src = 'stream?path=' + enc(current.path) + '&retry=' + Date.now();
+    audio.playbackRate = parseFloat($('#speedSel').value);
+    recovering = false;
+    if (wantPlaying) audio.play().catch(() => {});
+    else audio.load();
+  }, delay * 1000);
+}
+
+audio.addEventListener('playing', () => {
+  wantPlaying = true; everPlayed = true;
+  if (retry.n) { console.log('[AudioStream] reconnected'); resetRetry(); }
+});
+
+// Watchdog: playing but the clock hasn't moved for 20s = silently stalled stream
+setInterval(() => {
+  const pos = audio.currentTime;
+  if (pos !== lastTickPos || audio.paused || !wantPlaying) { lastTick = Date.now(); lastTickPos = pos; return; }
+  if (Date.now() - lastTick < 20000 || retry.timer) return;
+  lastTick = Date.now();
+  if (adBreak) nextAd();          // stuck ad: skip it
+  else recover('stalled');
+}, 5000);
+
+// Phone came back online / tab woke up: retry right away instead of waiting
+window.addEventListener('online', () => {
+  if (retry.timer) { clearTimeout(retry.timer); retry.timer = null; retry.n = Math.max(0, retry.n - 1); recover('back online'); }
 });
 
 function saveProgress(force = false) {
-  if (!current || !audio.duration) return;
+  if (adBreak || !current || !audio.duration) return;
   lastSaved = Date.now();
   const body = JSON.stringify({ path: current.path, position: audio.currentTime, duration: audio.duration });
   if (force && navigator.sendBeacon) {
-    navigator.sendBeacon('/api/progress', new Blob([body], { type: 'application/json' }));
+    navigator.sendBeacon('api/progress', new Blob([body], { type: 'application/json' }));
   } else {
-    fetch('/api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    fetch('api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
   }
 }
 window.addEventListener('pagehide', () => saveProgress(true));
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveProgress(true); });
 
 function skip(sec) {
-  if (!audio.duration) return;
+  if (adBreak || !audio.duration) return;
   audio.currentTime = Math.min(Math.max(0, audio.currentTime + sec), audio.duration - 0.5);
   saveProgress();
 }
 function togglePlay() {
   if (!current) return;
-  audio.paused ? audio.play() : audio.pause();
+  if (audio.error || retry.n) {            // broken: pressing play retries now
+    wantPlaying = true;
+    clearTimeout(retry.timer); retry.timer = null;
+    retry.n = 0; recover('play pressed');
+    return;
+  }
+  if (audio.paused) { wantPlaying = true; audio.play().catch(() => {}); }
+  else userPause();
 }
 function trackIndex() { return queue.findIndex(f => f.path === current?.path); }
 function nextTrack() {
+  if (adBreak) return nextAd();
   const i = trackIndex();
   if (i >= 0 && i < queue.length - 1) loadTrack(queue[i + 1].path, { autoplay: true, fromStart: false });
 }
 function prevTrack() {
+  if (adBreak) return;
   if (audio.currentTime > 5) { audio.currentTime = 0; return; }
   const i = trackIndex();
   if (i > 0) loadTrack(queue[i - 1].path, { autoplay: true });
@@ -418,11 +548,13 @@ document.querySelectorAll('[data-skip]').forEach(b => b.onclick = () => skip(par
 $('#playBtn').onclick = togglePlay;
 $('#nextBtn').onclick = nextTrack;
 $('#prevBtn').onclick = prevTrack;
+$('#skipAdBtn').onclick = () => nextAd();
 $('#restartBtn').onclick = () => { audio.currentTime = 0; saveProgress(); };
 
 const seekBar = $('#seekBar');
 seekBar.addEventListener('input', () => { seeking = true; $('#cur').textContent = fmt(seekBar.value / 1000 * (audio.duration || 0)); });
 seekBar.addEventListener('change', () => {
+  if (adBreak) { seeking = false; return; }
   if (audio.duration) audio.currentTime = seekBar.value / 1000 * audio.duration;
   seeking = false; saveProgress();
 });
@@ -435,7 +567,7 @@ $('#sleepSel').onchange = e => {
   clearTimeout(sleepTimer); sleepAtEnd = false;
   const v = parseInt(e.target.value);
   if (v === -1) sleepAtEnd = true;
-  else if (v > 0) sleepTimer = setTimeout(() => { audio.pause(); e.target.value = '0'; }, v * 60000);
+  else if (v > 0) sleepTimer = setTimeout(() => { userPause(); e.target.value = '0'; }, v * 60000);
 };
 
 document.addEventListener('keydown', e => {
@@ -447,6 +579,123 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'p' || e.key === 'P') prevTrack();
 });
 
+// ---------- Commercial breaks ----------
+let adBreak = null;          // {list: [segments], i, nextPath}
+let adSegments = [];
+let adSettings = { ads_enabled: false, ads_every_min: 30, ads_per_break: 2 };
+let recentAds = [];
+let listened = 0, lastT = null;
+
+async function loadAdSettings() {
+  try {
+    const info = await api('api/ads');
+    adSegments = info.segments || [];
+    adSettings = await api('api/settings');
+  } catch { adSegments = []; }
+  listened = LS.get('adListened:' + me, 0);
+  if (!adSegments.length) return;           // no ads folder: hide the control
+  $('#adsCtl').style.display = 'inline';
+  $('#adsOn').checked = adSettings.ads_enabled;
+  $('#adsEvery').value = String(adSettings.ads_every_min);
+  $('#adsCount').value = String(adSettings.ads_per_break);
+  $('#adsEvery').disabled = $('#adsCount').disabled = !adSettings.ads_enabled;
+}
+async function saveAdSettings() {
+  const on = $('#adsOn').checked;
+  const every = Math.max(1, Math.min(600, parseInt($('#adsEvery').value) || 30));
+  $('#adsEvery').value = every;
+  const body = { ads_enabled: on, ads_every_min: every, ads_per_break: parseInt($('#adsCount').value) };
+  $('#adsEvery').disabled = $('#adsCount').disabled = !on;
+  try {
+    adSettings = await api('api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {}
+}
+$('#adsOn').onchange = saveAdSettings;
+$('#adsEvery').onchange = saveAdSettings;
+$('#adsCount').onchange = saveAdSettings;
+
+// Count real listening time (not seeks, not ads) toward the next break
+function countListening() {
+  const t = audio.currentTime;
+  if (!audio.paused && lastT != null) {
+    const d = (t - lastT) / (audio.playbackRate || 1);
+    if (d > 0 && d < 2) listened += d;
+  }
+  lastT = t;
+  if (Math.random() < 0.05) LS.set('adListened:' + me, Math.round(listened));
+}
+audio.addEventListener('seeking', () => {
+  lastT = null;
+  if (!adBreak && pendingSeek == null && audio.currentTime > 0) lastGood = audio.currentTime;  // remember jumps too
+});
+
+function nextTrackOrBreak() {
+  const i = trackIndex();
+  if (i < 0 || i >= queue.length - 1) return;       // end of folder: no break
+  const due = adSettings.ads_enabled && adSegments.length &&
+              listened >= adSettings.ads_every_min * 60;
+  if (due) startBreak(queue[i + 1].path);
+  else nextTrack();
+}
+
+function pickAds(n) {
+  n = Math.min(n, adSegments.length);
+  const key = a => a.file + '@' + a.start;
+  // avoid repeating recently heard ads when there are enough to choose from
+  let pool = adSegments.filter(a => !recentAds.includes(key(a)));
+  if (pool.length < n) { recentAds = []; pool = adSegments.slice(); }
+  const picks = [];
+  while (picks.length < n) picks.push(...pool.splice(Math.floor(Math.random() * pool.length), 1));
+  recentAds.push(...picks.map(key));
+  recentAds = recentAds.slice(-Math.max(0, adSegments.length - n));
+  return picks;
+}
+
+function startBreak(nextPath) {
+  adBreak = { list: pickAds(adSettings.ads_per_break), i: -1, nextPath };
+  $('#player').classList.add('ad');
+  $('#np-title').textContent = '📻 Commercial break';
+  $('#np-folder').textContent = 'Up next: ' + basename(nextPath);
+  document.title = 'Commercial break · AudioStream';
+  if ('mediaSession' in navigator)
+    navigator.mediaSession.metadata = new MediaMetadata({ title: 'Commercial break', artist: 'Up next: ' + basename(nextPath) });
+  playAd(0);
+}
+
+function playAd(i) {
+  adBreak.i = i;
+  const seg = adBreak.list[i];
+  const url = 'adstream?f=' + enc(seg.file);
+  $('#np-title').textContent = `📻 Commercial break · ${i + 1} of ${adBreak.list.length}`;
+  audio.playbackRate = 1;
+  if (audio.src.endsWith(url) && audio.readyState >= 1) {
+    audio.currentTime = seg.start;               // same compilation file: just jump
+  } else {
+    audio.src = url;
+  }
+  audio.play().catch(() => {});
+}
+
+function nextAd() {
+  if (!adBreak) return;
+  if (adBreak.i + 1 < adBreak.list.length) playAd(adBreak.i + 1);
+  else endBreak();
+}
+
+function cancelBreak() {
+  adBreak = null;
+  current = null;              // the ad isn't a book position: don't save it
+  listened = 0; lastT = null;
+  LS.set('adListened:' + me, 0);
+  $('#player').classList.remove('ad');
+}
+
+function endBreak() {
+  const next = adBreak.nextPath;
+  cancelBreak();
+  loadTrack(next, { autoplay: true });
+}
+
 // Lock-screen / headphone / car controls
 function setMediaSession() {
   if (!('mediaSession' in navigator)) return;
@@ -457,8 +706,8 @@ function setMediaSession() {
   });
   const ms = navigator.mediaSession;
   const h = (a, fn) => { try { ms.setActionHandler(a, fn); } catch {} };
-  h('play', () => audio.play());
-  h('pause', () => audio.pause());
+  h('play', () => togglePlayIfPaused());
+  h('pause', () => userPause());
   h('seekbackward', d => skip(-(d.seekOffset || 30)));
   h('seekforward', d => skip(d.seekOffset || 30));
   h('previoustrack', prevTrack);
