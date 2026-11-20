@@ -39,7 +39,43 @@ AUDIO_EXTS = {
     ".webm": "audio/webm",
 }
 
+IMAGE_EXTS = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+              ".webp": "image/webp", ".gif": "image/gif"}
+# Preferred cover file names, best first (matched case-insensitively, any image extension)
+COVER_NAMES = ["cover", "folder", "front", "album", "albumart", "albumartlarge", "poster", "art"]
+
 HERE = os.path.dirname(os.path.abspath(__file__))
+_cover_cache = {}   # dir -> (mtime, image path or None)
+
+
+def find_cover(dirpath):
+    """Pick the cover image in a folder: a well-known name first, else the largest image."""
+    try:
+        mtime = os.stat(dirpath).st_mtime
+    except OSError:
+        return None
+    hit = _cover_cache.get(dirpath)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    images = []
+    try:
+        for e in os.scandir(dirpath):
+            if e.name.startswith(".") or not e.is_file():
+                continue
+            stem, ext = os.path.splitext(e.name)
+            if ext.lower() in IMAGE_EXTS:
+                images.append((stem.lower(), e.path, e.stat().st_size))
+    except OSError:
+        images = []
+    best = None
+    for name in COVER_NAMES:
+        best = next((p for stem, p, _ in images if stem == name), None)
+        if best:
+            break
+    if not best and images:
+        best = max(images, key=lambda i: i[2])[1]   # largest picture is usually the cover
+    _cover_cache[dirpath] = (mtime, best)
+    return best
 STATIC_DIR = os.path.join(HERE, "static")
 CHUNK = 256 * 1024
 
@@ -263,6 +299,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_get_progress()
             if route == "/api/recent":
                 return self.api_recent()
+            if route == "/cover":
+                return self.serve_cover()
             if route == "/stream":
                 return self.stream()
             if route == "/adstream":
@@ -343,6 +381,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def serve_cover(self):
+        """GET /cover?path=<folder or audio file> -> that folder's cover image."""
+        p = self.safe_path(self.qs().get("path"))
+        if p and os.path.isfile(p):
+            p = os.path.dirname(p)
+        img = find_cover(p) if p and os.path.isdir(p) else None
+        if not img:
+            return self.send_error_json(404, "no cover")
+        with open(img, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", IMAGE_EXTS[os.path.splitext(img)[1].lower()])
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=600")
+        self.end_headers()
+        self.wfile.write(body)
+
     # ---------- API ----------
     def api_roots(self):
         self.send_json({"roots": self.roots})
@@ -368,7 +423,8 @@ class Handler(BaseHTTPRequestHandler):
                     full = os.path.join(path, e.name)
                     prefix = full + os.sep
                     has_prog = any(k.startswith(prefix) for k in files_progress)
-                    dirs.append({"name": e.name, "path": full, "has_progress": has_prog})
+                    dirs.append({"name": e.name, "path": full, "has_progress": has_prog,
+                                 "cover": bool(find_cover(full))})
                 elif e.is_file():
                     ext = os.path.splitext(e.name)[1].lower()
                     if ext in AUDIO_EXTS:
@@ -404,6 +460,7 @@ class Handler(BaseHTTPRequestHandler):
             "dirs": dirs,
             "files": files,
             "resume": resume,
+            "cover": bool(find_cover(path)),
         })
 
     def api_get_progress(self):
@@ -438,6 +495,7 @@ class Handler(BaseHTTPRequestHandler):
                     "path": fp,
                     "name": os.path.basename(fp),
                     "folder": os.path.dirname(fp),
+                    "cover": bool(find_cover(os.path.dirname(fp))),
                     "progress": p,
                 })
         items.sort(key=lambda i: i["progress"]["updated"], reverse=True)

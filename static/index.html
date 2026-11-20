@@ -75,6 +75,16 @@
   #skipAdBtn { display: none; }
   #player.ad #skipAdBtn { display: inline-block; background: var(--accent); color: #1a1a1a; border: none; font-weight: 600; }
   #adsCtl { display: none; }
+  .thumb { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; flex-shrink: 0; background: var(--panel2); }
+  .item .icon.has-thumb { width: 36px; }
+  .folder-head { display: flex; gap: 14px; align-items: center; margin: 8px 0 4px; }
+  .folder-head img { width: 132px; height: 132px; object-fit: cover; border-radius: 10px;
+    box-shadow: 0 6px 20px #0008; flex-shrink: 0; }
+  .folder-head .t { font-size: 18px; font-weight: 600; word-break: break-word; }
+  .np-row { display: flex; gap: 10px; align-items: center; }
+  .np-row .np-text { flex: 1; min-width: 0; }
+  #np-art { width: 46px; height: 46px; border-radius: 6px; object-fit: cover; display: none; flex-shrink: 0; }
+  #np-art.show { display: block; }
   .hint { text-align: center; font-size: 11px; color: var(--muted); margin-top: 6px; }
   @media (max-width: 520px) { .hint { display: none; } .controls button { min-width: 46px; } }
 </style>
@@ -107,8 +117,13 @@
 
 <div id="player">
   <div class="inner">
-    <div id="np-title">Nothing playing</div>
-    <div id="np-folder">Pick a file to start</div>
+    <div class="np-row">
+      <img id="np-art" alt="">
+      <div class="np-text">
+        <div id="np-title">Nothing playing</div>
+        <div id="np-folder">Pick a file to start</div>
+      </div>
+    </div>
     <div class="seek">
       <span id="cur">0:00</span>
       <input type="range" id="seekBar" min="0" max="1000" value="0" step="1">
@@ -276,8 +291,14 @@ function progressBar(p) {
   return `<div class="bar" style="width:${Math.min(100, p.position / p.duration * 100)}%"></div>`;
 }
 
+const coverUrl = p => 'cover?path=' + enc(p);
+
 function renderDir(d) {
   let html = '';
+  if (d.cover) {
+    html += `<div class="folder-head"><img src="${coverUrl(d.path)}" alt="" onerror="this.remove()">
+      <div class="t">${esc(basename(d.path))}</div></div>`;
+  }
   if (d.resume) {
     const f = d.files.find(x => x.path === d.resume);
     html += `<div class="row" style="margin:6px 0 4px">
@@ -286,7 +307,8 @@ function renderDir(d) {
   if (d.dirs.length) {
     html += `<h2>Folders</h2><div class="list">` + d.dirs.map(x => `
       <div class="item" data-dir="${esc(x.path)}">
-        <span class="icon">📁</span><span class="name">${esc(x.name)}</span>
+        ${x.cover ? `<img class="thumb" loading="lazy" src="${coverUrl(x.path)}" alt="" onerror="this.outerHTML='<span class=icon>📁</span>'">`
+                  : '<span class="icon">📁</span>'}<span class="name">${esc(x.name)}</span>
         ${x.has_progress ? '<span class="dot" title="You have listened in here"></span>' : ''}
       </div>`).join('') + `</div>`;
   }
@@ -320,7 +342,8 @@ async function showRecent() {
   } else {
     html += `<div class="list">` + r.items.map(i => `
       <div class="item" data-file="${esc(i.path)}" data-folder="${esc(i.folder)}">
-        <span class="icon">${i.progress.finished ? '✓' : '▶'}</span>
+        ${i.cover ? `<img class="thumb" loading="lazy" src="${coverUrl(i.folder)}" alt="">`
+                  : `<span class="icon">${i.progress.finished ? '✓' : '▶'}</span>`}
         <span class="name">${esc(i.name)}<br><small style="color:var(--muted)">${esc(i.folder)}</small></span>
         ${progressMeta(i.progress)}${progressBar(i.progress)}
       </div>`).join('') + `</div>
@@ -362,6 +385,7 @@ async function loadTrack(path, { autoplay = true, fromStart = false } = {}) {
   audio.playbackRate = parseFloat($('#speedSel').value);
   $('#np-title').textContent = current.name;
   $('#np-folder').textContent = folder;
+  showArt(folder);
   document.title = current.name + ' · AudioStream';
   setMediaSession();
   if (autoplay) audio.play().catch(() => {});
@@ -652,6 +676,7 @@ function pickAds(n) {
 }
 
 function startBreak(nextPath) {
+  hideArt();
   adBreak = { list: pickAds(adSettings.ads_per_break), i: -1, nextPath };
   $('#player').classList.add('ad');
   $('#np-title').textContent = '📻 Commercial break';
@@ -696,13 +721,29 @@ function endBreak() {
   loadTrack(next, { autoplay: true });
 }
 
+// ---------- Cover art ----------
+let artFolder = null, artOk = false;
+const npArt = $('#np-art');
+function showArt(folder) {
+  if (folder === artFolder) { npArt.classList.toggle('show', artOk); return; }
+  artFolder = folder; artOk = false;
+  npArt.classList.remove('show');
+  npArt.src = coverUrl(folder);
+}
+npArt.addEventListener('load', () => { artOk = true; npArt.classList.add('show'); setMediaSession(); });
+npArt.addEventListener('error', () => { artOk = false; npArt.classList.remove('show'); });
+function hideArt() { npArt.classList.remove('show'); }
+
 // Lock-screen / headphone / car controls
 function setMediaSession() {
-  if (!('mediaSession' in navigator)) return;
+  if (!('mediaSession' in navigator) || !current || adBreak) return;
+  const artwork = artOk && artFolder === current.folder
+    ? [{ src: new URL(coverUrl(current.folder), location.href).href, sizes: '512x512' }] : [];
   navigator.mediaSession.metadata = new MediaMetadata({
     title: current.name.replace(/\.[^.]+$/, ''),
     artist: basename(current.folder),
     album: current.folder,
+    artwork,
   });
   const ms = navigator.mediaSession;
   const h = (a, fn) => { try { ms.setActionHandler(a, fn); } catch {} };

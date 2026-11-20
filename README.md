@@ -37,25 +37,12 @@ Open `http://<computer-ip>:8000` in a browser on any device on your network.
   - When you open the page, the last file you played is loaded and ready.
 - **Controls:** back 30, back 20, play/pause, forward 20, forward 30, previous/next track, a seek bar, speed (0.75×–2×), a sleep timer (minutes or end of track), and restart.
 - **Reconnects by itself:** if the network drops or the stream stalls for 20 seconds, the player retries after 1, 2, 4, 8, 15 and then every 30 seconds, and picks up at the exact second it stopped. Pressing ▶ retries immediately. If you paused, it stays paused. The server drops connections that have been silent for 2 minutes, so a phone that disappears can't tie it up.
+- **Cover art:** any picture in a folder becomes its cover. It's shown at the top of the folder, as a thumbnail in folder lists and Recent, in the player, and on the phone's lock screen. A file named `cover`, `folder`, `front` or `album` (.jpg, .png, .webp or .gif) is used first. Otherwise it's the largest picture in the folder.
 - Plays the next file in the folder automatically, which suits audiobooks split into chapters.
 - **Keyboard:** Space plays/pauses · ←/→ skips 20s · Shift+←/→ skips 30s · N/P goes to the next/previous track.
 - **Lock screen, headphones and car:** these work through the Media Session API (skip buttons there jump 30s).
 - Formats: mp3, m4a, **m4b**, aac, ogg, opus, flac, wav, webm. What actually plays depends on the browser. Safari doesn't play ogg/opus.
 
-<<<<<<< HEAD
-## Start at boot (Linux, systemd)
-
-```bash
-sudo ./deploy/install.sh            # runs the service as you (the user who ran sudo)
-sudo nano /etc/audiostream.env      # set your folders, port and password
-sudo systemctl restart audiostream
-```
-
-The installer puts `deploy/audiostream.service` in `/etc/systemd/system/`, filling in your username and this folder's path, then enables it. After that it starts at every boot, even if nobody logs in.
-
-Useful commands:
-
-=======
 ## Commercial breaks
 
 Old-time-radio style ads play **between** songs or chapters, never in the middle of one.
@@ -84,7 +71,6 @@ The installer puts `deploy/audiostream.service` in `/etc/systemd/system/`, filli
 
 Useful commands:
 
->>>>>>> a9c2aa94210e856b14103f0d36c1c04a15191059
 ```bash
 systemctl status audiostream        # is it running?
 journalctl -u audiostream -f        # live log
