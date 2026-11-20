@@ -20,11 +20,10 @@ WorkingDirectory=__APPDIR__
 # Optional settings (password, roots, port) live in /etc/audiostream.env
 EnvironmentFile=-/etc/audiostream.env
 ExecStart=/usr/bin/python3 __APPDIR__/server.py \
-    --host ${AUDIOSTREAM_HOST} --port ${AUDIOSTREAM_PORT} \
+    --port ${AUDIOSTREAM_PORT} \
     --data ${AUDIOSTREAM_DATA} \
     $AUDIOSTREAM_ROOTS
 
-Environment=AUDIOSTREAM_HOST=0.0.0.0
 Environment=AUDIOSTREAM_PORT=8000
 Environment=AUDIOSTREAM_DATA=__APPDIR__/progress.json
 Environment=PYTHONUNBUFFERED=1
