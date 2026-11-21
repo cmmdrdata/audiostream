@@ -355,6 +355,12 @@ class Handler(BaseHTTPRequestHandler):
         user = self.require_user()
         if not user:
             return
+        # Saves carry the listener the page was loaded for. If the cookie now
+        # names someone else (switched in another tab, or mid-reload), refuse
+        # rather than write one listener's place into another's profile.
+        claimed = payload.get("user")
+        if route in ("/api/progress", "/api/progress/clear") and claimed is not None and claimed != user:
+            return self.send_error_json(409, "listener changed")
         if route == "/api/progress":
             return self.api_set_progress(user, payload)
         if route == "/api/settings":

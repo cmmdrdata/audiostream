@@ -28,6 +28,7 @@ Open `http://<computer-ip>:8000` in a browser on any device on your network.
   - Profiles go by name, not device. Pick the same name on your phone and your laptop and you continue where you left off on either one.
   - Profiles aren't passwords. Anyone who can reach the server can choose any name, so `--password` is still what keeps strangers out.
   - Positions saved by an older version are kept under a listener called **Default**.
+  - Switching listeners saves the outgoing listener's place first, then starts fresh. Every save is tagged with the listener it belongs to, and the server refuses a save if the browser's current listener has changed. So one listener's track never ends up in another's Recent list or Resume, even with two tabs open. A tab that's still open under the old listener reloads as the new one.
 
 - Browse folders inside your roots, with breadcrumbs. Files sort naturally, so Chapter 2 comes before Chapter 10.
 - **Resume:** the position is saved every 5 seconds, on pause and when you close the tab. Reopening a file starts 2 seconds before where you stopped.

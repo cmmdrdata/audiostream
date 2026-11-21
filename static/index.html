@@ -247,6 +247,10 @@ async function showPicker() {
 $('#newUserForm').onsubmit = e => { e.preventDefault(); pickUser($('#newUser').value.trim()); };
 
 async function pickUser(name) {
+  // Save the outgoing listener's place now, then forget the track so the
+  // reload's pagehide/visibilitychange saves can't land on the new listener.
+  if (current) { saveProgress(true); userPause(); }
+  current = null; me = null;
   try {
     await api('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
   } catch (err) { $('#pickErr').textContent = err.message; return; }
@@ -546,14 +550,26 @@ window.addEventListener('online', () => {
 });
 
 function saveProgress(force = false) {
-  if (adBreak || !current || !audio.duration) return;
+  if (adBreak || !current || !me || !audio.duration) return;
   lastSaved = Date.now();
-  const body = JSON.stringify({ path: current.path, position: audio.currentTime, duration: audio.duration });
+  // "user" lets the server refuse a save meant for a different listener
+  // (e.g. another tab in this browser switched listeners).
+  const body = JSON.stringify({ user: me, path: current.path, position: audio.currentTime, duration: audio.duration });
   if (force && navigator.sendBeacon) {
     navigator.sendBeacon('api/progress', new Blob([body], { type: 'application/json' }));
   } else {
-    fetch('api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    fetch('api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true })
+      .then(r => { if (r.status === 409) listenerChanged(); })
+      .catch(() => {});
   }
+}
+
+// The browser's listener cookie now names someone else (switched in another tab).
+function listenerChanged() {
+  if (!me) return;
+  current = null; me = null;
+  audio.pause();
+  location.reload();
 }
 window.addEventListener('pagehide', () => saveProgress(true));
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveProgress(true); });
